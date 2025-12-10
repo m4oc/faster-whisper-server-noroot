@@ -1,8 +1,5 @@
 FROM nvidia/cuda:12.9.1-cudnn-runtime-ubuntu22.04
 
-# `ffmpeg` is installed because without it `gradio` won't work with mp3(possible others as well) files
-# hadolint ignore=DL3008,DL3015,DL4006
-
 RUN apt update && apt install -y software-properties-common && \
     add-apt-repository ppa:deadsnakes/ppa -y && \
     apt update && \
@@ -11,16 +8,18 @@ RUN apt update && apt install -y software-properties-common && \
     update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 2 && \
     update-alternatives --set python3 /usr/bin/python3.12
 
-#uv latest
+# uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
-# Switch to the non-root user for all subsequent commands and entrypoint
-USER 1000
-
-# Optional but recommended: set the working directory to the new user's home
+# -------------------------------
+# Create real user "vllm"
+# -------------------------------
+RUN useradd -m -u 1000 vllm
+USER vllm
+ENV HOME=/home/vllm
 WORKDIR /home/vllm
 
-# https://docs.astral.sh/uv/guides/integration/docker/#intermediate-layers
+# First sync layer (before project files)
 RUN --mount=type=cache,target=/home/vllm/.cache/uv \
     --mount=type=bind,source=uv.lock,target=uv.lock \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
@@ -28,11 +27,12 @@ RUN --mount=type=cache,target=/home/vllm/.cache/uv \
 
 COPY ./src ./pyproject.toml ./uv.lock ./
 
-RUN --mount=type=cache,target=/root/.cache/uv \
+RUN --mount=type=cache,target=/home/vllm/.cache/uv \
     uv sync --frozen --extra ui
 
 ENV WHISPER__MODEL=Systran/faster-whisper-large-v3
 ENV WHISPER__INFERENCE_DEVICE=auto
 ENV UVICORN_HOST=0.0.0.0
 ENV UVICORN_PORT=8000
+
 CMD ["uv", "run", "uvicorn", "--factory", "faster_whisper_server.main:create_app"]
